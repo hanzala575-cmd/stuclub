@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Private Chat Room</title>
+<style>
+:root{--bg:#f4f5f7;--card:#fff;--text:#1c1e21;--mute:#6b7280;--accent:#4f46e5;--other:#e8eaee;--bd:#dfe2e7}
+@media(prefers-color-scheme:dark){:root{--bg:#111318;--card:#1b1e25;--text:#e8e9ec;--mute:#9aa0ab;--accent:#818cf8;--other:#2a2e38;--bd:#2c303a}}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--text);font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.hide{display:none!important}
+.gate{height:100%;display:flex;align-items:center;justify-content:center;padding:16px}
+.box{background:var(--card);border:1px solid var(--bd);border-radius:16px;padding:28px;width:100%;max-width:360px;box-shadow:0 8px 30px rgba(0,0,0,.08)}
+h1{margin:0 0 4px;font-size:22px}
+p.sub{margin:0 0 18px;color:var(--mute);font-size:14px}
+input{width:100%;padding:12px;margin-bottom:10px;border:1px solid var(--bd);border-radius:10px;background:var(--bg);color:var(--text);font-size:16px}
+input:focus{outline:2px solid var(--accent);border-color:transparent}
+button{cursor:pointer;border:0;border-radius:10px;padding:12px 16px;background:var(--accent);color:#fff;font-size:15px;font-weight:600}
+button.ghost{background:transparent;color:var(--accent);border:1px solid var(--bd);padding:8px 10px;font-size:13px}
+.full{width:100%}
+.err{color:#dc2626;font-size:13px;min-height:18px;margin:0 0 8px}
+.app{height:100%;display:flex;flex-direction:column;max-width:760px;margin:0 auto;background:var(--card)}
+header{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 14px;border-bottom:1px solid var(--bd);flex-wrap:wrap}
+header b{font-size:17px}
+header small{display:block;color:var(--mute);font-size:12px}
+.btns{display:flex;gap:6px;flex-wrap:wrap}
+#msgs{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:8px;background:var(--bg)}
+.m{max-width:80%;padding:8px 12px;border-radius:14px;background:var(--other);align-self:flex-start;overflow-wrap:anywhere}
+.m.me{background:var(--accent);color:#fff;align-self:flex-end}
+.m .n{font-size:12px;font-weight:700;opacity:.75;margin-bottom:2px}
+.m .t{font-size:11px;opacity:.6;margin-top:2px;text-align:right}
+.sys{align-self:center;color:var(--mute);font-size:13px;text-align:center}
+form.send{display:flex;gap:8px;padding:10px;border-top:1px solid var(--bd)}
+form.send input{margin:0;flex:1}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;padding:16px;z-index:9}
+</style>
+</head>
+<body>
+
+<div id="gate" class="gate">
+  <div class="box">
+    <h1>🔒 Private Chat</h1>
+    <p class="sub">Enter your name and the room code to join.</p>
+    <input id="name" placeholder="Your name" maxlength="24" autocomplete="off">
+    <input id="code" type="password" placeholder="Room code" autocomplete="off">
+    <p id="gerr" class="err"></p>
+    <button id="join" class="full">Enter room</button>
+  </div>
+</div>
+
+<div id="app" class="app hide">
+  <header>
+    <div><b>💬 Chat Room</b><small id="who"></small></div>
+    <div class="btns">
+      <button class="ghost" id="chg">Change code</button>
+      <button class="ghost" id="clr">Clear chat</button>
+      <button class="ghost" id="leave">Leave</button>
+    </div>
+  </header>
+  <div id="msgs"></div>
+  <form class="send" id="sendf">
+    <input id="txt" placeholder="Type a message…" maxlength="1000" autocomplete="off">
+    <button type="submit">Send</button>
+  </form>
+</div>
+
+<div id="modal" class="modal hide">
+  <div class="box">
+    <h1 id="mtitle">Admin</h1>
+    <p class="sub" id="msub"></p>
+    <input id="apass" type="password" inputmode="numeric" placeholder="Admin passcode">
+    <input id="ncode" type="text" placeholder="New room code" autocomplete="off">
+    <p id="merr" class="err"></p>
+    <div style="display:flex;gap:8px">
+      <button id="msave" style="flex:1">Confirm</button>
+      <button id="mcancel" class="ghost" style="flex:1">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const ADMIN_PASSCODE = "1406";
+const DEFAULT_CODE = "welcome";          // room code until you change it
+const K = {cfg:"pc_hash", msgs:"pc_msgs", name:"pc_name", sess:"pc_sess", id:"pc_id"};
+const $ = id => document.getElementById(id);
+let myName = "", myId = "", mode = "";
+
+const get = k => { try{ return localStorage.getItem(k); }catch(e){ return null; } };
+const set = (k,v) => { try{ v===null ? localStorage.removeItem(k) : localStorage.setItem(k,v); return true; }catch(e){ return false; } };
+const esc = s => { const d=document.createElement("div"); d.textContent=s; return d.innerHTML; };
+
+function hash(s){ // simple hash (client-side only)
+  let h1=0xdeadbeef, h2=0x41c6ce57;
+  for(const c of "pc:"+s){ const x=c.charCodeAt(0); h1=Math.imul(h1^x,2654435761); h2=Math.imul(h2^x,1597334677); }
+  h1=Math.imul(h1^(h1>>>16),2246822507)^Math.imul(h2^(h2>>>13),3266489909);
+  h2=Math.imul(h2^(h2>>>16),2246822507)^Math.imul(h1^(h1>>>13),3266489909);
+  return (h2>>>0).toString(16)+(h1>>>0).toString(16);
+}
+const roomHash = () => get(K.cfg) || hash(DEFAULT_CODE);
+const loadMsgs = () => { try{ return JSON.parse(get(K.msgs)||"[]"); }catch(e){ return []; } };
+
+function render(){
+  const box=$("msgs"), list=loadMsgs();
+  box.innerHTML = list.length ? "" : '<div class="sys">No messages yet — say hi 👋</div>';
+  list.forEach(m=>{
+    const el=document.createElement("div");
+    el.className="m"+(m.uid===myId?" me":"");
+    const t=new Date(m.ts).toLocaleString([], {hour:"2-digit",minute:"2-digit",day:"numeric",month:"short"});
+    el.innerHTML='<div class="n">'+esc(m.name)+'</div>'+esc(m.text)+'<div class="t">'+t+'</div>';
+    box.appendChild(el);
+  });
+  box.scrollTop=box.scrollHeight;
+}
+
+function enter(name){
+  myName=name; $("gerr").textContent="";
+  $("gate").classList.add("hide"); $("app").classList.remove("hide");
+  $("who").textContent="Signed in as "+name;
+  render();
+}
+function leave(msg){
+  set(K.sess,null);
+  $("app").classList.add("hide"); $("gate").classList.remove("hide");
+  $("code").value=""; $("gerr").textContent=msg||"";
+}
+
+$("join").onclick=()=>{
+  const name=$("name").value.trim(), code=$("code").value;
+  if(!name) return $("gerr").textContent="Please enter a name.";
+  if(!code) return $("gerr").textContent="Please enter the room code.";
+  if(hash(code)!==roomHash()) return $("gerr").textContent="Wrong room code.";
+  set(K.sess,roomHash()); set(K.name,name); enter(name);
+};
+["name","code"].forEach(id=>$(id).addEventListener("keydown",e=>{ if(e.key==="Enter") $("join").click(); }));
+$("leave").onclick=()=>leave("");
+
+$("sendf").onsubmit=e=>{
+  e.preventDefault();
+  const text=$("txt").value.trim(); if(!text) return;
+  const list=loadMsgs(); list.push({name:myName,text,uid:myId,ts:Date.now()});
+  if(!set(K.msgs,JSON.stringify(list.slice(-500)))) alert("Could not save: browser storage is blocked or full.");
+  $("txt").value=""; render();
+};
+
+// Live sync between tabs/windows of the same browser
+window.addEventListener("storage",e=>{
+  if(e.key===K.msgs && !$("app").classList.contains("hide")) render();
+  if(e.key===K.cfg && !$("app").classList.contains("hide") && get(K.sess)!==roomHash())
+    leave("The room code was changed. Enter the new code to rejoin.");
+});
+
+// Admin actions (need passcode 1406)
+function openModal(m){
+  mode=m; $("apass").value=""; $("ncode").value=""; $("merr").textContent="";
+  $("ncode").classList.toggle("hide",m!=="code");
+  $("mtitle").textContent = m==="code" ? "Change room code" : "Clear chat";
+  $("msub").textContent = m==="code" ? "Enter the admin passcode and a new room code." : "Enter the admin passcode to delete all messages.";
+  $("modal").classList.remove("hide"); $("apass").focus();
+}
+$("chg").onclick=()=>openModal("code");
+$("clr").onclick=()=>openModal("clear");
+$("mcancel").onclick=()=>$("modal").classList.add("hide");
+$("msave").onclick=()=>{
+  if($("apass").value!==ADMIN_PASSCODE) return $("merr").textContent="Wrong admin passcode.";
+  if(mode==="code"){
+    const n=$("ncode").value.trim();
+    if(n.length<3) return $("merr").textContent="New code must be at least 3 characters.";
+    set(K.cfg,hash(n)); set(K.sess,hash(n));
+  } else { set(K.msgs,"[]"); }
+  $("modal").classList.add("hide"); render();
+};
+
+// Startup
+myId=get(K.id)||("u"+Math.random().toString(36).slice(2,10)); set(K.id,myId);
+$("name").value=get(K.name)||"";
+if(get(K.sess)===roomHash() && $("name").value) enter($("name").value);
+</script>
+</body>
+</html>
